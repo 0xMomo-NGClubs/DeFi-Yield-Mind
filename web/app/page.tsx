@@ -97,11 +97,13 @@ function AiRecommendCard({
   // 非合法 EVM 地址（模型幻觉）直接跳过请求
   const isValidAddr = /^0x[0-9a-fA-F]{40}$/.test(rec.address)
 
-  const { data: vault, isLoading, isError } = useQuery({
+  const { data: vault, isLoading } = useQuery({
     queryKey: ['vault', rec.chainId, rec.address],
     queryFn: () => getVaultDetail(rec.chainId, rec.address),
     staleTime: 5 * 60 * 1000,
     enabled: isValidAddr,
+    retry: 0,          // 详情接口失败不重试，避免刷屏报错
+    throwOnError: false, // 错误静默降级，用 rec 数据兜底
   })
 
   const displayName      = vault?.name ?? rec.name
@@ -244,30 +246,36 @@ function AiRecommendCard({
         )}
         {isLoading ? (
           <span className="ml-auto text-[11px] text-gray-600">加载中...</span>
-        ) : isError ? (
-          <span className="ml-auto text-[11px] text-red-500/70">详情加载失败</span>
-        ) : position ? (
-          <div className="flex gap-2 ml-auto">
-            {vault?.isRedeemable && (
-              <button onClick={() => onDeposit(vault, 'redeem')}
-                className="text-xs font-semibold bg-gray-800 hover:bg-red-900/60 border border-gray-700 hover:border-red-700/60 text-gray-300 hover:text-red-300 active:scale-95 px-3 py-1.5 rounded-lg transition-all">
-                赎回
-              </button>
-            )}
-            {vault?.isTransactional && (
-              <button onClick={() => onDeposit(vault, 'deposit')}
-                className="text-xs font-semibold bg-emerald-700 hover:bg-emerald-600 active:scale-95 px-3 py-1.5 rounded-lg transition-all">
-                加仓 +
-              </button>
-            )}
-          </div>
-        ) : vault?.isTransactional ? (
-          <button onClick={() => onDeposit(vault, 'deposit')}
-            className="flex-1 text-xs font-semibold bg-blue-600 hover:bg-blue-500 active:scale-95 py-1.5 rounded-lg transition-all">
-            存款
-          </button>
+        ) : vault ? (
+          // 详情加载成功：根据 vault 能力展示按钮
+          position ? (
+            <div className="flex gap-2 ml-auto">
+              {vault.isRedeemable && (
+                <button onClick={() => onDeposit(vault, 'redeem')}
+                  className="text-xs font-semibold bg-gray-800 hover:bg-red-900/60 border border-gray-700 hover:border-red-700/60 text-gray-300 hover:text-red-300 active:scale-95 px-3 py-1.5 rounded-lg transition-all">
+                  赎回
+                </button>
+              )}
+              {vault.isTransactional && (
+                <button onClick={() => onDeposit(vault, 'deposit')}
+                  className="text-xs font-semibold bg-emerald-700 hover:bg-emerald-600 active:scale-95 px-3 py-1.5 rounded-lg transition-all">
+                  加仓 +
+                </button>
+              )}
+            </div>
+          ) : vault.isTransactional ? (
+            <button onClick={() => onDeposit(vault, 'deposit')}
+              className="flex-1 text-xs font-semibold bg-blue-600 hover:bg-blue-500 active:scale-95 py-1.5 rounded-lg transition-all">
+              存款
+            </button>
+          ) : (
+            <span className="ml-auto text-[11px] text-gray-700">不支持存款</span>
+          )
         ) : (
-          <span className="ml-auto text-[11px] text-gray-700">不支持存款</span>
+          // 详情未加载（失败或未请求）：静默降级，显示协议地址供参考
+          <span className="ml-auto text-[10px] text-gray-700 font-mono">
+            {rec.address.slice(0, 6)}…{rec.address.slice(-4)}
+          </span>
         )}
       </div>
     </div>
