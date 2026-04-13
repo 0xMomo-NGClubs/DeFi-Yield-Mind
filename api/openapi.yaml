@@ -1,0 +1,711 @@
+openapi: "3.0.3"
+info:
+  title: DeFi Yield Hub API
+  description: >
+    封装 LI.FI Earn API 的 DeFi 收益工具集。
+    支持 Vault 发现、持仓查询、跨链存款交易构建。
+    可作为通用 Agent Skill 供 Claude、OpenClaw、LangChain 等框架直接调用。
+  version: "1.0.0"
+  contact:
+    name: DeFi Mullet Hackathon
+    url: https://lifi.notion.site/defi-mullet-hackathon-1-builder-edition
+
+servers:
+  - url: http://localhost:3000
+    description: 本地开发环境
+  - url: https://your-api-domain.com
+    description: 生产环境（部署后替换）
+
+tags:
+  - name: Vaults
+    description: 收益 Vault 查询
+  - name: Portfolio
+    description: 用户持仓查询
+  - name: Reference
+    description: 链与协议参考数据
+  - name: Deposit
+    description: 存款交易构建
+  - name: Redeem
+    description: 赎回交易构建
+  - name: History
+    description: APY 历史快照
+  - name: Search
+    description: AI 自然语言智能搜索
+
+paths:
+  /vaults:
+    get:
+      operationId: getVaults
+      summary: 查询收益 Vault 列表
+      description: >
+        返回可用的 DeFi 收益 Vault，支持按链、代币符号、协议、最低 APY、最低 TVL 过滤，
+        以及按 APY 或 TVL 排序。支持分页，共有 672+ 个 Vault。
+      tags: [Vaults]
+      parameters:
+        - name: chainId
+          in: query
+          description: 按链 ID 过滤（例如 42161=Arbitrum, 8453=Base, 1=Ethereum）
+          schema:
+            type: integer
+          example: 42161
+        - name: asset
+          in: query
+          description: 按底层代币符号过滤（例如 USDC、USDT、ETH）
+          schema:
+            type: string
+          example: USDC
+        - name: protocol
+          in: query
+          description: 按协议名过滤（例如 morpho-v1、aave-v3、euler-v2）
+          schema:
+            type: string
+          example: morpho-v1
+        - name: minApy
+          in: query
+          description: 最低总 APY 门槛（百分比，例如 5 表示 5%）
+          schema:
+            type: number
+          example: 5
+        - name: minTvl
+          in: query
+          description: 最低 TVL（USD）
+          schema:
+            type: number
+          example: 1000000
+        - name: sortBy
+          in: query
+          description: 排序字段
+          schema:
+            type: string
+            enum: [apy, tvl, apy7d, apy30d]
+          example: apy
+        - name: limit
+          in: query
+          description: 每页数量，默认 20，最大 100
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
+        - name: cursor
+          in: query
+          description: 分页游标（来自上一页响应的 nextCursor）
+          schema:
+            type: string
+      responses:
+        "200":
+          description: 成功返回 Vault 列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VaultsResponse"
+        "500":
+          $ref: "#/components/responses/Error"
+
+  /vaults/{chainId}/{address}:
+    get:
+      operationId: getVaultDetail
+      summary: 获取单个 Vault 详情
+      description: 根据链 ID 和 Vault 合约地址获取完整的 Vault 信息，包括 APY 历史、TVL、协议信息等。
+      tags: [Vaults]
+      parameters:
+        - name: chainId
+          in: path
+          required: true
+          description: 链 ID
+          schema:
+            type: integer
+          example: 42161
+        - name: address
+          in: path
+          required: true
+          description: Vault 合约地址（0x 格式）
+          schema:
+            type: string
+          example: "0x1234567890abcdef1234567890abcdef12345678"
+      responses:
+        "200":
+          description: 成功返回 Vault 详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Vault"
+        "500":
+          $ref: "#/components/responses/Error"
+
+  /portfolio/{wallet}:
+    get:
+      operationId: getPortfolio
+      summary: 查询钱包持仓
+      description: >
+        查询指定钱包地址在所有支持协议中的 DeFi 持仓情况，
+        包含各仓位的 USD 价值和原生代币数量，以及总资产 USD。
+      tags: [Portfolio]
+      parameters:
+        - name: wallet
+          in: path
+          required: true
+          description: EVM 钱包地址（0x 格式，40位十六进制）
+          schema:
+            type: string
+            pattern: '^0x[0-9a-fA-F]{40}$'
+          example: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
+      responses:
+        "200":
+          description: 成功返回持仓列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PortfolioResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/Error"
+
+  /chains:
+    get:
+      operationId: getChains
+      summary: 获取支持的链列表
+      description: 返回 LI.FI Earn 支持的所有区块链网络列表，当前共 21 条链。
+      tags: [Reference]
+      responses:
+        "200":
+          description: 成功返回链列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chains:
+                    type: array
+                    items:
+                      type: object
+        "500":
+          $ref: "#/components/responses/Error"
+
+  /protocols:
+    get:
+      operationId: getProtocols
+      summary: 获取支持的协议列表
+      description: 返回 LI.FI Earn 支持的所有 DeFi 协议列表，当前共 20+ 个协议。
+      tags: [Reference]
+      responses:
+        "200":
+          description: 成功返回协议列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  protocols:
+                    type: array
+                    items:
+                      type: object
+        "500":
+          $ref: "#/components/responses/Error"
+
+  /redeem/quote:
+    post:
+      operationId: createRedeemQuote
+      summary: 构建赎回交易
+      description: >
+        调用 LI.FI Composer 生成待签名的赎回交易数据。
+        从 ERC-4626 vault 中赎回份额，换回底层代币。
+        返回的 transactionRequest 由用户通过钱包签名后广播上链，本接口不执行上链操作。
+      tags: [Redeem]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RedeemQuoteRequest"
+            example:
+              vaultChainId: 42161
+              vaultAddress: "0x1234567890abcdef1234567890abcdef12345678"
+              toToken: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+              fromAmount: "1000000000000000000"
+              userWallet: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
+      responses:
+        "200":
+          description: 成功返回待签名赎回交易
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DepositQuoteResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/Error"
+
+  /history/{chainId}/{address}:
+    get:
+      operationId: getVaultHistory
+      summary: 获取 Vault APY 历史快照
+      description: >
+        返回指定 Vault 的 APY 历史数据，由后端每小时自动采集（SQLite 存储）。
+        可用于渲染 APY 趋势图，分析 Vault 收益稳定性。
+      tags: [History]
+      parameters:
+        - name: chainId
+          in: path
+          required: true
+          description: 链 ID
+          schema:
+            type: integer
+          example: 42161
+        - name: address
+          in: path
+          required: true
+          description: Vault 合约地址（0x 格式）
+          schema:
+            type: string
+          example: "0x1234567890abcdef1234567890abcdef12345678"
+        - name: limit
+          in: query
+          description: 返回快照数量，默认 200，最大 500
+          schema:
+            type: integer
+            default: 200
+            maximum: 500
+      responses:
+        "200":
+          description: 成功返回 APY 历史快照列表
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/VaultHistoryResponse"
+        "500":
+          $ref: "#/components/responses/Error"
+
+  /search/parse:
+    post:
+      operationId: searchVaults
+      summary: AI 自然语言搜索金库
+      description: >
+        使用 AI（GLM-4-Flash）解析自然语言搜索意图，自动调用 search_vaults 工具查询实时数据，
+        返回最优推荐金库列表和参数标签。支持最多 4 轮 Function Calling。
+        本接口是平台的 AI Agent Skill 核心入口。
+      tags: [Search]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                  description: 自然语言查询字符串
+                  example: "USDC 收益最高的"
+            example:
+              query: "Arbitrum 上 Aave 的 ETH vault"
+      responses:
+        "200":
+          description: 成功返回 AI 解析结果与推荐金库
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/Error"
+
+  /deposit/quote:
+    post:
+      operationId: createDepositQuote
+      summary: 构建存款交易
+      description: >
+        调用 LI.FI Composer 生成待签名的存款交易数据。
+        支持跨链操作（swap + bridge + deposit 合并为单笔交易）。
+        返回的 transactionRequest 由用户通过钱包签名后广播上链，本接口不执行上链操作。
+      tags: [Deposit]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DepositQuoteRequest"
+            example:
+              fromChainId: 42161
+              fromToken: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+              fromAmount: "1000000"
+              vaultChainId: 42161
+              vaultAddress: "0x1234567890abcdef1234567890abcdef12345678"
+              userWallet: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
+      responses:
+        "200":
+          description: 成功返回待签名交易
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DepositQuoteResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "500":
+          $ref: "#/components/responses/Error"
+
+components:
+  schemas:
+    UnderlyingToken:
+      type: object
+      properties:
+        symbol:
+          type: string
+          example: USDC
+        address:
+          type: string
+          example: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+        decimals:
+          type: integer
+          example: 6
+
+    VaultAnalytics:
+      type: object
+      properties:
+        apy:
+          type: object
+          properties:
+            base:
+              type: number
+              nullable: true
+              example: 5.2
+            reward:
+              type: number
+              nullable: true
+              example: 1.1
+            total:
+              type: number
+              nullable: true
+              example: 6.3
+        apy1d:
+          type: number
+          nullable: true
+        apy7d:
+          type: number
+          nullable: true
+        apy30d:
+          type: number
+          nullable: true
+        tvl:
+          type: object
+          properties:
+            usd:
+              type: string
+              description: TVL 字符串（非数字，需手动 parseFloat）
+              example: "45000000"
+
+    Vault:
+      type: object
+      properties:
+        address:
+          type: string
+          description: Vault 合约地址，存款时作为 Composer 的 toToken 参数
+        chainId:
+          type: integer
+        name:
+          type: string
+        protocol:
+          type: object
+          properties:
+            name:
+              type: string
+        underlyingTokens:
+          type: array
+          items:
+            $ref: "#/components/schemas/UnderlyingToken"
+        tags:
+          type: array
+          items:
+            type: string
+        analytics:
+          $ref: "#/components/schemas/VaultAnalytics"
+        isTransactional:
+          type: boolean
+          description: 是否支持通过 Composer 存款
+        isRedeemable:
+          type: boolean
+
+    VaultsResponse:
+      type: object
+      properties:
+        vaults:
+          type: array
+          items:
+            $ref: "#/components/schemas/Vault"
+        nextCursor:
+          type: string
+          description: 下一页游标，为空时表示已是最后一页
+          nullable: true
+        total:
+          type: integer
+
+    Position:
+      type: object
+      properties:
+        chainId:
+          type: integer
+        protocolName:
+          type: string
+        asset:
+          type: object
+          properties:
+            address:
+              type: string
+            name:
+              type: string
+            symbol:
+              type: string
+            decimals:
+              type: integer
+        balanceUsd:
+          type: string
+        balanceNative:
+          type: string
+
+    PortfolioResponse:
+      type: object
+      properties:
+        positions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Position"
+        totalUsd:
+          type: string
+          description: 所有持仓的 USD 总价值
+
+    RedeemQuoteRequest:
+      type: object
+      required:
+        - vaultChainId
+        - vaultAddress
+        - toToken
+        - fromAmount
+        - userWallet
+      properties:
+        vaultChainId:
+          type: integer
+          description: Vault 所在链 ID
+          example: 42161
+        vaultAddress:
+          type: string
+          description: Vault 合约地址（ERC-4626 份额 token 地址）
+          example: "0x1234567890abcdef1234567890abcdef12345678"
+        toToken:
+          type: string
+          description: 赎回后想要的底层代币地址（如 USDC 地址）
+          example: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+        fromAmount:
+          type: string
+          description: 赎回份额数量（按 vault lpToken decimals 换算，通常为 18 位）
+          example: "1000000000000000000"
+        userWallet:
+          type: string
+          description: 用户钱包地址
+          example: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
+
+    VaultHistoryResponse:
+      type: object
+      properties:
+        vaultId:
+          type: string
+          description: "格式为 chainId:address"
+          example: "42161:0x1234..."
+        count:
+          type: integer
+          description: 返回快照数量
+        snapshots:
+          type: array
+          items:
+            type: object
+            properties:
+              apy:
+                type: number
+                nullable: true
+                description: 该时间点的总 APY（百分比）
+                example: 8.5
+              tvlUsd:
+                type: string
+                nullable: true
+                description: 该时间点的 TVL（USD 字符串）
+                example: "45000000"
+              capturedAt:
+                type: string
+                description: 采集时间（ISO 8601 格式）
+                example: "2026-04-13T10:00:00.000Z"
+
+    Recommendation:
+      type: object
+      properties:
+        chainId:
+          type: integer
+          example: 42161
+        address:
+          type: string
+          example: "0x1234567890abcdef1234567890abcdef12345678"
+        name:
+          type: string
+          example: "Morpho USDC Vault"
+        protocol:
+          type: string
+          example: "morpho-v1"
+        tokens:
+          type: array
+          items:
+            type: string
+          example: ["USDC"]
+        apy:
+          type: number
+          example: 12.5
+        tvlUsd:
+          type: string
+          example: "50000000"
+        reason:
+          type: string
+          description: AI 给出的推荐理由
+          example: "Arbitrum 上 USDC APY 最高，TVL 充足流动性好"
+
+    SearchResult:
+      type: object
+      properties:
+        params:
+          type: object
+          description: AI 解析出的查询参数
+          properties:
+            asset:
+              type: string
+              example: "USDC"
+            protocol:
+              type: string
+              example: "morpho-v1"
+            chainId:
+              type: integer
+              example: 42161
+            minApy:
+              type: number
+              example: 5
+            sortBy:
+              type: string
+              example: "apy"
+        recommendations:
+          type: array
+          description: AI 推荐的金库列表（最多 5 个）
+          items:
+            $ref: "#/components/schemas/Recommendation"
+        explanation:
+          type: string
+          description: AI 对搜索结果的自然语言说明
+          example: "找到 3 个 Arbitrum 上的 USDC vault，推荐 APY 最高的"
+        description:
+          type: string
+          description: 参数摘要描述
+          example: "代币: USDC，链: Arbitrum，排序: 按 APY 降序"
+        model:
+          type: string
+          description: 使用的 AI 模型
+          example: "glm-4-flash-250414"
+
+    DepositQuoteRequest:
+      type: object
+      required:
+        - fromChainId
+        - fromToken
+        - fromAmount
+        - vaultChainId
+        - vaultAddress
+        - userWallet
+      properties:
+        fromChainId:
+          type: integer
+          description: 资金来源链 ID
+          example: 42161
+        fromToken:
+          type: string
+          description: 输入代币地址（用户持有的代币）
+          example: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831"
+        fromAmount:
+          type: string
+          description: 数量（需按代币 decimals 换算，USDC 6位=1000000 表示 1 USDC）
+          example: "1000000"
+        vaultChainId:
+          type: integer
+          description: Vault 所在链 ID（可跨链）
+          example: 42161
+        vaultAddress:
+          type: string
+          description: 目标 Vault 合约地址（来自 /vaults 接口的 address 字段）
+          example: "0x1234567890abcdef1234567890abcdef12345678"
+        userWallet:
+          type: string
+          description: 用户钱包地址
+          example: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045"
+
+    DepositQuoteResponse:
+      type: object
+      properties:
+        transactionRequest:
+          type: object
+          description: 待签名的交易数据，通过钱包签名后广播
+          properties:
+            to:
+              type: string
+            data:
+              type: string
+            value:
+              type: string
+            gasLimit:
+              type: string
+              nullable: true
+            chainId:
+              type: integer
+        estimate:
+          type: object
+          properties:
+            fromAmount:
+              type: string
+            toAmount:
+              type: string
+            executionDuration:
+              type: integer
+              description: 预计执行时间（秒）
+            feeCosts:
+              type: array
+              items:
+                type: object
+            gasCosts:
+              type: array
+              items:
+                type: object
+        action:
+          type: object
+          properties:
+            fromChainId:
+              type: integer
+            toChainId:
+              type: integer
+            fromToken:
+              type: object
+            toToken:
+              type: object
+            fromAmount:
+              type: string
+
+  responses:
+    Error:
+      description: 服务端错误
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+    BadRequest:
+      description: 请求参数错误
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string

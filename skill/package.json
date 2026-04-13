@@ -1,0 +1,19 @@
+{
+  "name": "defi-yield-hub-skill",
+  "version": "1.0.0",
+  "description": "DeFi Yield Hub Agent Skill — 供 Claude / LangChain 等 Agent 框架调用",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx --env-file=.env defi-yield-hub.skill.ts",
+    "build": "tsc"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "viem": "^2.21.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3"
+  }
+}
