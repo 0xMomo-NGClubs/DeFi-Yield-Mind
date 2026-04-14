@@ -217,7 +217,7 @@ export default function AboutPage() {
           </div>
 
           <h1 className="text-4xl font-black text-white mb-3 leading-tight">
-            DeFi Yield Hub
+            DeFi Yield Mind
           </h1>
           <p className="text-gray-400 text-base mb-8 max-w-2xl leading-relaxed">
             多链 DeFi 收益聚合器 — 通过 LI.FI Earn 统一接入 20+ 协议、21+ 链的收益金库，

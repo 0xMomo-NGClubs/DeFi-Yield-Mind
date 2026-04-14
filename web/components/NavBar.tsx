@@ -25,7 +25,7 @@ export function NavBar() {
       <div className="container mx-auto px-4 max-w-7xl flex items-center justify-between h-14">
         {/* Logo */}
         <Link href="/" className="font-bold text-lg text-white tracking-tight">
-          DeFi Yield Hub
+          DeFi Yield Mind
         </Link>
 
         {/* 导航链接 */}

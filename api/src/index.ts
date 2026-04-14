@@ -26,7 +26,7 @@ app.use('*', cors())
 app.use('*', logger())
 
 // 健康检查
-app.get('/', (c) => c.json({ status: 'ok', service: 'DeFi Yield Hub API' }))
+app.get('/', (c) => c.json({ status: 'ok', service: 'DeFi Yield Mind API' }))
 
 // OpenAPI JSON spec（从 yaml 转换）
 app.get('/openapi.json', (c) => {
@@ -46,7 +46,7 @@ app.get('/scalar', (c) => {
   const html = `<!DOCTYPE html>
 <html>
 <head>
-  <title>DeFi Yield Hub — API Docs</title>
+  <title>DeFi Yield Mind — API Docs</title>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
 </head>
@@ -75,7 +75,7 @@ app.route('/redeem', redeemRouter)
 const port = Number(process.env.PORT) || 3000
 
 serve({ fetch: app.fetch, port }, () => {
-  console.log(`🚀 DeFi Yield Hub API 运行中: http://localhost:${port}`)
+  console.log(`🚀 DeFi Yield Mind API 运行中: http://localhost:${port}`)
   // 启动 APY 快照定时任务
   startSnapshotScheduler()
 })

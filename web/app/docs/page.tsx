@@ -53,7 +53,7 @@ const response = await client.messages.create({
 
 const client = new anthropic.Anthropic();
 
-// 定义 DeFi Yield Hub 工具
+// 定义 DeFi Yield Mind 工具
 const tools = [
   {
     name: "get_vaults",
@@ -246,7 +246,7 @@ export default function SkillPage() {
               <span className="text-xs font-mono bg-violet-900/60 text-violet-300 border border-violet-700/50 px-2 py-0.5 rounded">Agent Skill</span>
               <span className="text-xs font-mono bg-green-900/40 text-green-400 border border-green-700/40 px-2 py-0.5 rounded">10 端点</span>
             </div>
-            <h1 className="text-2xl font-bold text-white mb-1">DeFi Yield Hub Skill</h1>
+            <h1 className="text-2xl font-bold text-white mb-1">DeFi Yield Mind Skill</h1>
             <p className="text-gray-400 text-sm max-w-xl">
               可直接接入 Claude、LangChain 等 Agent 框架的 DeFi 工具集。
               支持 Vault 发现、持仓查询、AI 搜索、跨链存款交易构建。

@@ -1,5 +1,5 @@
 /**
- * DeFi Yield Hub — Agent Skill
+ * DeFi Yield Mind — Agent Skill
  *
  * 供 Claude API、LangChain 等 Agent 框架直接调用的技能文件。
  * 签名和广播交易在本地完成，私钥不经过任何 API。
@@ -612,7 +612,7 @@ export const DEFI_TOOLS: Anthropic.Tool[] = [
 // 传入用户消息，Claude 自主决策调用哪些工具，完成整个流程
 // ============================================================
 
-const SYSTEM_PROMPT = `你是 DeFi Yield Hub 的 AI 投资助手，可以帮用户查询、分析、执行 DeFi 存款/赎回，并支持定时盯盘与自动迁移。
+const SYSTEM_PROMPT = `你是 DeFi Yield Mind 的 AI 投资助手，可以帮用户查询、分析、执行 DeFi 存款/赎回，并支持定时盯盘与自动迁移。
 
 你有以下能力：
 - 查询多链 DeFi Vault 的实时 APY 和 TVL 数据

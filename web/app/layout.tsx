@@ -4,8 +4,8 @@ import { Providers } from "@/lib/providers";
 import { NavBar } from "@/components/NavBar";
 
 export const metadata: Metadata = {
-  title: "DeFi Yield Hub",
-  description: "基于 LI.FI Earn API 的 DeFi 收益聚合平台",
+  title: "DeFi Yield Mind",
+  description: "AI 驱动的多链 DeFi 收益聚合平台，基于 LI.FI Earn API",
 };
 
 export default function RootLayout({

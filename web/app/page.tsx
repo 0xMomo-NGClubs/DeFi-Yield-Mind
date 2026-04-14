@@ -610,7 +610,7 @@ export default function VaultsPage() {
       <div className="rounded-2xl bg-gradient-to-br from-blue-950/60 via-gray-900 to-gray-900 border border-blue-900/30 px-6 py-5">
         <div className="flex items-start justify-between mb-5">
           <div>
-            <h1 className="text-2xl font-bold text-white mb-1">DeFi Yield Hub</h1>
+            <h1 className="text-2xl font-bold text-white mb-1">DeFi Yield Mind</h1>
             <p className="text-gray-400 text-sm">发现最优收益机会，一键跨链存款</p>
           </div>
           <div className="text-right">

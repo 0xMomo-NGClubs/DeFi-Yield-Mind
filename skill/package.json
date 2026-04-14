@@ -1,7 +1,7 @@
 {
   "name": "defi-yield-hub-skill",
   "version": "1.0.0",
-  "description": "DeFi Yield Hub Agent Skill — 供 Claude / LangChain 等 Agent 框架调用",
+  "description": "DeFi Yield Mind Agent Skill — 供 Claude / LangChain 等 Agent 框架调用",
   "type": "module",
   "scripts": {
     "dev": "tsx --env-file=.env defi-yield-hub.skill.ts",

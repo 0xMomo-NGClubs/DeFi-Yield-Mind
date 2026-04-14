@@ -188,7 +188,7 @@ async function callGLM(
 
 // ---- System Prompt ----
 function buildSystemPrompt(refCtx: string): string {
-  return `你是 DeFi Yield Hub 的智能搜索助手，帮用户精准找到最适合的 DeFi 金库。
+  return `你是 DeFi Yield Mind 的智能搜索助手，帮用户精准找到最适合的 DeFi 金库。
 
 === 平台参考数据 ===
 ${refCtx}
