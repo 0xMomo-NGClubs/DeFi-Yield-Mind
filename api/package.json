@@ -12,7 +12,8 @@
     "better-sqlite3": "^12.8.0",
     "hono": "^4.7.7",
     "js-yaml": "^4.1.1",
-    "node-cache": "^5.1.2"
+    "node-cache": "^5.1.2",
+    "viem": "^2.47.16"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",

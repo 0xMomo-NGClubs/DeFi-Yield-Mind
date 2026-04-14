@@ -3,7 +3,7 @@
 import { useState, useMemo, useEffect } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useAccount } from 'wagmi'
-import { getPortfolio, getVaults, getVaultHistory, Vault, Position } from '@/lib/api'
+import { getPortfolio, getVaults, getVaultDetail, getVaultHistory, Vault, Position } from '@/lib/api'
 import { ApySparkline } from '@/components/ApySparkline'
 import { DepositModal } from '@/components/DepositModal'
 import { MigrateModal } from '@/components/MigrateModal'
@@ -44,13 +44,8 @@ function formatTvl(usd: string) {
   if (n >= 1e3) return `$${(n / 1e3).toFixed(1)}K`
   return `$${n.toFixed(0)}`
 }
-function matchProtocol(posProtocol: string, vaultProtocol: string) {
-  const p = posProtocol.toLowerCase().replace(/[^a-z0-9]/g, '')
-  const v = vaultProtocol.toLowerCase().replace(/[^a-z0-9]/g, '')
-  return p.includes(v) || v.includes(p)
-}
 
-// ---- 持仓卡片（与首页 VaultCard 同款网格风格）----
+// ---- 持仓卡片 ----
 function PositionCard({
   pos,
   onDeposit,
@@ -58,21 +53,47 @@ function PositionCard({
   onShowDetail,
 }: {
   pos: Position
-  onDeposit: (vault: Vault, tab?: 'deposit' | 'redeem') => void
-  onMigrate: (fromVault: Vault, toVault: Vault) => void
-  onShowDetail: (vault: Vault, fromVault: Vault) => void
+  // 回调直接携带 pos，无需外层再次查找
+  onDeposit: (vault: Vault, pos: Position, tab?: 'deposit' | 'redeem') => void
+  onMigrate: (fromVault: Vault, toVault: Vault, pos: Position) => void
+  onShowDetail: (vault: Vault, fromVault: Vault, pos: Position) => void
 }) {
-  const { data: vaultsData, isLoading } = useQuery({
+  // 如果后端精确匹配了 vaultAddress，直接查详情；否则按 chainId+asset 列表查然后匹配
+  const hasVaultAddr = !!pos.vaultAddress
+
+  // 精确查询：通过 vaultAddress 获取 vault 详情
+  const { data: exactVault, isLoading: exactLoading } = useQuery({
+    queryKey: ['vault-exact', pos.chainId, pos.vaultAddress],
+    queryFn: () => getVaultDetail(pos.chainId, pos.vaultAddress!),
+    enabled: hasVaultAddr,
+    staleTime: 5 * 60 * 1000,
+    retry: 0,
+    throwOnError: false,
+  })
+
+  // 降级查询：无 vaultAddress 时，按协议名模糊匹配（仅用于 LI.FI Earn 未精确索引的协议）
+  const { data: vaultsData, isLoading: listLoading } = useQuery({
     queryKey: ['vault-match', pos.chainId, pos.asset.symbol],
     queryFn: () => getVaults({ chainId: pos.chainId, asset: pos.asset.symbol, sortBy: 'apy', limit: 30 }),
+    enabled: !hasVaultAddr,
     staleTime: 5 * 60 * 1000,
   })
 
-  const matchedVault = useMemo(() => {
-    if (!vaultsData) return null
-    return vaultsData.vaults.find(v => matchProtocol(pos.protocolName, v.protocol.name)) ?? null
-  }, [vaultsData, pos.protocolName])
+  const isLoading = hasVaultAddr ? exactLoading : listLoading
 
+  // 精确模式：直接用 exactVault；降级模式：协议名匹配（有 vaultAddress 时跳过，避免误判）
+  const matchedVault = useMemo(() => {
+    if (hasVaultAddr) return exactVault ?? null
+    if (!vaultsData) return null
+    const p = pos.protocolName.toLowerCase().replace(/[^a-z0-9]/g, '')
+    if (!p) return null
+    return vaultsData.vaults.find(v => {
+      const vp = v.protocol.name.toLowerCase().replace(/[^a-z0-9]/g, '')
+      return vp && (p.includes(vp) || vp.includes(p))
+    }) ?? null
+  }, [hasVaultAddr, exactVault, vaultsData, pos.protocolName])
+
+  // 同链同资产中找更优金库（APY 高 0.5% 以上）
   const bestAlternative = useMemo(() => {
     if (!vaultsData || !matchedVault) return null
     const cur = matchedVault.analytics.apy.total ?? 0
@@ -80,6 +101,24 @@ function PositionCard({
       v => v.address !== matchedVault.address && (v.analytics.apy.total ?? 0) > cur + 0.5
     ) ?? null
   }, [vaultsData, matchedVault])
+
+  // 当降级模式且需要更优金库比较时，也要拉 vault 列表
+  const { data: altVaultsData } = useQuery({
+    queryKey: ['vault-alt', pos.chainId, pos.asset.symbol],
+    queryFn: () => getVaults({ chainId: pos.chainId, asset: pos.asset.symbol, sortBy: 'apy', limit: 30 }),
+    enabled: hasVaultAddr && !!matchedVault,
+    staleTime: 5 * 60 * 1000,
+  })
+
+  const bestAlternativeExact = useMemo(() => {
+    if (!hasVaultAddr || !matchedVault || !altVaultsData) return null
+    const cur = matchedVault.analytics.apy.total ?? 0
+    return altVaultsData.vaults.find(
+      v => v.address !== matchedVault.address && (v.analytics.apy.total ?? 0) > cur + 0.5
+    ) ?? null
+  }, [hasVaultAddr, matchedVault, altVaultsData])
+
+  const finalBestAlt = hasVaultAddr ? bestAlternativeExact : bestAlternative
 
   const { data: historyData } = useQuery({
     queryKey: ['history', matchedVault?.chainId, matchedVault?.address],
@@ -134,16 +173,15 @@ function PositionCard({
   const dailyEarn   = apy != null ? balanceUsd * (apy / 100 / 365)      : null
   const monthlyEarn = apy != null ? balanceUsd * (apy / 100 / 365 * 30) : null
 
-  const bestApy    = bestAlternative?.analytics.apy.total ?? null
+  const bestApy    = finalBestAlt?.analytics.apy.total ?? null
   const apyDiff    = bestApy != null && apy != null ? bestApy - apy : null
   const yearlyGain = apyDiff != null ? balanceUsd * (apyDiff / 100) : null
 
   return (
     <div className={`group relative bg-gray-900 border rounded-2xl flex flex-col hover:border-gray-600 hover:bg-gray-800/50 hover:shadow-lg hover:shadow-black/30 transition-all duration-200 ${
-      bestAlternative ? 'border-yellow-800/40' : 'border-gray-800'
+      finalBestAlt ? 'border-yellow-800/40' : 'border-gray-800'
     }`}>
-      {/* 有更优 vault 时顶部渐变条 */}
-      {bestAlternative && (
+      {finalBestAlt && (
         <div className="absolute top-0 inset-x-0 h-0.5 rounded-t-2xl bg-gradient-to-r from-yellow-600/0 via-yellow-500/70 to-yellow-600/0" />
       )}
 
@@ -214,7 +252,6 @@ function PositionCard({
         </div>
       </div>
 
-      {/* 分隔线 */}
       <div className="mx-4 mt-3 border-t border-gray-800/80" />
 
       {/* 我的仓位 */}
@@ -241,23 +278,20 @@ function PositionCard({
         </div>
       </div>
 
-      {/* 更优机会：内嵌面板 */}
-      {bestAlternative && (
+      {/* 更优机会 */}
+      {finalBestAlt && (
         <div className="mx-4 mt-2 rounded-xl border border-yellow-700/50 bg-yellow-950/30 overflow-hidden">
-          {/* 标题栏 */}
           <div className="flex items-center gap-1.5 px-3 py-1.5 bg-yellow-900/25 border-b border-yellow-800/30">
             <span className="text-yellow-400 text-[11px]">💡</span>
             <span className="text-[11px] font-semibold text-yellow-300 tracking-wide">更优选择</span>
             <div className="flex items-center gap-1 ml-auto">
-              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${protocolColor(bestAlternative.protocol.name)}`}>
-                {bestAlternative.protocol.name}
+              <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full border ${protocolColor(finalBestAlt.protocol.name)}`}>
+                {finalBestAlt.protocol.name}
               </span>
             </div>
           </div>
-
-          {/* APY 对比 */}
           <div className="px-3 pt-2.5 pb-2">
-            <p className="text-[10px] text-gray-600 truncate mb-2">{bestAlternative.name}</p>
+            <p className="text-[10px] text-gray-600 truncate mb-2">{finalBestAlt.name}</p>
             <div className="flex items-center gap-2">
               <div className="flex-1 text-center bg-gray-900/60 rounded-lg py-2">
                 <p className="text-[9px] text-gray-600 mb-0.5">当前</p>
@@ -275,8 +309,6 @@ function PositionCard({
               </div>
             </div>
           </div>
-
-          {/* 年化收益 + 按钮组 */}
           <div className="flex items-center gap-2 px-3 pb-3">
             {yearlyGain != null && yearlyGain > 0.01 && (
               <p className="text-[10px] text-yellow-700 flex-1">
@@ -285,13 +317,13 @@ function PositionCard({
             )}
             <div className="flex gap-1.5 ml-auto">
               <button
-                onClick={() => onShowDetail(bestAlternative, matchedVault)}
+                onClick={() => onShowDetail(finalBestAlt, v, pos)}
                 className="text-xs font-medium border border-yellow-700/50 text-yellow-400 hover:bg-yellow-900/40 px-3 py-1.5 rounded-lg transition-all whitespace-nowrap"
               >
                 详情
               </button>
               <button
-                onClick={() => onMigrate(matchedVault, bestAlternative)}
+                onClick={() => onMigrate(v, finalBestAlt, pos)}
                 className="text-xs font-semibold bg-yellow-600 hover:bg-yellow-500 active:scale-95 text-black px-3 py-1.5 rounded-lg transition-all whitespace-nowrap"
               >
                 迁移 →
@@ -304,28 +336,20 @@ function PositionCard({
       {/* 操作按钮 */}
       <div className="px-4 pt-2.5 pb-4 mt-auto flex items-center gap-2">
         {v.protocol.url && (
-          <a
-            href={v.protocol.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[11px] text-gray-500 hover:text-gray-300 border border-gray-800 hover:border-gray-600 px-3 py-1.5 rounded-lg transition-colors"
-          >
+          <a href={v.protocol.url} target="_blank" rel="noopener noreferrer"
+            className="text-[11px] text-gray-500 hover:text-gray-300 border border-gray-800 hover:border-gray-600 px-3 py-1.5 rounded-lg transition-colors">
             官网 ↗
           </a>
         )}
         {v.isRedeemable && (
-          <button
-            onClick={() => onDeposit(v, 'redeem')}
-            className="flex-1 text-xs font-semibold bg-gray-800 hover:bg-red-900/60 border border-gray-700 hover:border-red-700/60 text-gray-300 hover:text-red-300 active:scale-95 py-1.5 rounded-lg transition-all"
-          >
+          <button onClick={() => onDeposit(v, pos, 'redeem')}
+            className="flex-1 text-xs font-semibold bg-gray-800 hover:bg-red-900/60 border border-gray-700 hover:border-red-700/60 text-gray-300 hover:text-red-300 active:scale-95 py-1.5 rounded-lg transition-all">
             赎回
           </button>
         )}
         {v.isTransactional && (
-          <button
-            onClick={() => onDeposit(v, 'deposit')}
-            className="flex-1 text-xs font-semibold bg-emerald-700 hover:bg-emerald-600 active:scale-95 py-1.5 rounded-lg transition-all"
-          >
+          <button onClick={() => onDeposit(v, pos, 'deposit')}
+            className="flex-1 text-xs font-semibold bg-emerald-700 hover:bg-emerald-600 active:scale-95 py-1.5 rounded-lg transition-all">
             加仓 +
           </button>
         )}
@@ -339,12 +363,17 @@ export default function PortfolioPage() {
   const { address: connectedAddress } = useAccount()
   const [inputAddress, setInputAddress] = useState('')
   const [mounted, setMounted] = useState(false)
+
+  // 弹窗状态：直接携带 pos，无需再次 matchProtocol 搜索
   const [selectedVault, setSelectedVault] = useState<Vault | null>(null)
+  const [selectedPos, setSelectedPos] = useState<Position | null>(null)
   const [modalTab, setModalTab] = useState<'deposit' | 'redeem'>('deposit')
   const [migrateFrom, setMigrateFrom] = useState<Vault | null>(null)
   const [migrateTo, setMigrateTo] = useState<Vault | null>(null)
+  const [migratePos, setMigratePos] = useState<Position | null>(null)
   const [detailVault, setDetailVault] = useState<Vault | null>(null)
   const [detailFromVault, setDetailFromVault] = useState<Vault | null>(null)
+  const [detailPos, setDetailPos] = useState<Position | undefined>(undefined)
 
   useEffect(() => { setMounted(true) }, [])
 
@@ -357,29 +386,22 @@ export default function PortfolioPage() {
     enabled: !!wallet,
   })
 
-  function handleMigrate(fromVault: Vault, toVault: Vault) {
-    setMigrateFrom(fromVault)
-    setMigrateTo(toVault)
-  }
-
-  function handleShowDetail(vault: Vault, fromVault: Vault) {
-    setDetailVault(vault)
-    setDetailFromVault(fromVault)
-  }
-
-  function handleDeposit(vault: Vault, tab?: 'deposit' | 'redeem') {
+  // 回调直接携带 pos，彻底避免二次 matchProtocol 匹配
+  function handleDeposit(vault: Vault, pos: Position, tab?: 'deposit' | 'redeem') {
     setSelectedVault(vault)
+    setSelectedPos(pos)
     setModalTab(tab ?? 'deposit')
   }
-
-  const selectedPosition = useMemo(() => {
-    if (!selectedVault || !data) return null
-    return data.positions.find(p =>
-      p.chainId === selectedVault.chainId &&
-      matchProtocol(p.protocolName, selectedVault.protocol.name) &&
-      selectedVault.underlyingTokens.some(t => t.symbol.toUpperCase() === p.asset.symbol.toUpperCase())
-    ) ?? null
-  }, [selectedVault, data])
+  function handleMigrate(fromVault: Vault, toVault: Vault, pos: Position) {
+    setMigrateFrom(fromVault)
+    setMigrateTo(toVault)
+    setMigratePos(pos)
+  }
+  function handleShowDetail(vault: Vault, fromVault: Vault, pos: Position) {
+    setDetailVault(vault)
+    setDetailFromVault(fromVault)
+    setDetailPos(pos)
+  }
 
   return (
     <div className="space-y-6">
@@ -421,7 +443,6 @@ export default function PortfolioPage() {
         </>
       )}
 
-      {/* skeleton */}
       {wallet && isLoading && (
         <div className="space-y-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 animate-pulse">
@@ -448,7 +469,6 @@ export default function PortfolioPage() {
 
       {data && (
         <div className="space-y-4">
-          {/* 总资产 */}
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 flex items-center justify-between">
             <div>
               <p className="text-sm text-gray-400 mb-1">总持仓价值</p>
@@ -460,53 +480,46 @@ export default function PortfolioPage() {
           {data.positions.length === 0 ? (
             <div className="text-center py-16 text-gray-500 text-sm">该地址暂无持仓记录</div>
           ) : (
-            /* 与首页相同的响应式三列网格 */
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {data.positions.map((pos, i) => (
-                <PositionCard key={i} pos={pos} onDeposit={handleDeposit} onMigrate={handleMigrate} onShowDetail={handleShowDetail} />
+                <PositionCard
+                  key={`${pos.chainId}-${pos.vaultAddress ?? pos.protocolName}-${i}`}
+                  pos={pos}
+                  onDeposit={handleDeposit}
+                  onMigrate={handleMigrate}
+                  onShowDetail={handleShowDetail}
+                />
               ))}
             </div>
           )}
         </div>
       )}
 
-      {selectedVault && (
+      {selectedVault && selectedPos && (
         <DepositModal
           vault={selectedVault}
-          onClose={() => setSelectedVault(null)}
+          onClose={() => { setSelectedVault(null); setSelectedPos(null) }}
           initialTab={modalTab}
-          position={selectedPosition}
+          position={selectedPos}
         />
       )}
 
-      {migrateFrom && migrateTo && data && (
+      {migrateFrom && migrateTo && migratePos && (
         <MigrateModal
           fromVault={migrateFrom}
           toVault={migrateTo}
-          position={
-            data.positions.find(p =>
-              p.chainId === migrateFrom.chainId &&
-              matchProtocol(p.protocolName, migrateFrom.protocol.name) &&
-              migrateFrom.underlyingTokens.some(t => t.symbol.toUpperCase() === p.asset.symbol.toUpperCase())
-            )!
-          }
-          onClose={() => { setMigrateFrom(null); setMigrateTo(null) }}
+          position={migratePos}
+          onClose={() => { setMigrateFrom(null); setMigrateTo(null); setMigratePos(null) }}
         />
       )}
 
-      {detailVault && detailFromVault && data && (
+      {detailVault && detailFromVault && (
         <VaultDetailModal
           vault={detailVault}
           currentVault={detailFromVault}
-          position={
-            data.positions.find(p =>
-              p.chainId === detailFromVault.chainId &&
-              matchProtocol(p.protocolName, detailFromVault.protocol.name) &&
-              detailFromVault.underlyingTokens.some(t => t.symbol.toUpperCase() === p.asset.symbol.toUpperCase())
-            ) ?? undefined
-          }
-          onClose={() => { setDetailVault(null); setDetailFromVault(null) }}
-          onMigrate={() => handleMigrate(detailFromVault, detailVault)}
+          position={detailPos}
+          onClose={() => { setDetailVault(null); setDetailFromVault(null); setDetailPos(undefined) }}
+          onMigrate={() => detailPos && handleMigrate(detailFromVault, detailVault, detailPos)}
         />
       )}
     </div>

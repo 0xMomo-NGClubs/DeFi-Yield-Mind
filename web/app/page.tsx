@@ -3,7 +3,7 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
 import { useInfiniteQuery, useQuery, useMutation } from '@tanstack/react-query'
 import { useAccount } from 'wagmi'
-import { getVaults, getVaultDetail, getChains, getProtocols, getPortfolio, Vault, Position, parseSearchQuery, SearchRecommendation } from '@/lib/api'
+import { getVaults, getVaultDetail, getChains, getProtocols, getPortfolio, checkVaultBalances, Vault, Position, parseSearchQuery, SearchRecommendation } from '@/lib/api'
 import { VaultFilter } from '@/components/VaultFilter'
 import { DepositModal } from '@/components/DepositModal'
 import { VaultCard } from '@/components/VaultCard'
@@ -84,12 +84,12 @@ function aiProtocolColor(name: string) {
 
 // ---- AI 推荐金库卡片（对齐 VaultCard 风格）----
 function AiRecommendCard({
-  rec, rank, chainName, positions, onDeposit,
+  rec, rank, chainName, positionMap, onDeposit,
 }: {
   rec: SearchRecommendation
   rank: number
   chainName: string
-  positions: Position[]
+  positionMap: Map<string, Position>   // slug → Position，来自父组件的链上精确匹配结果
   onDeposit: (vault: Vault, tab?: 'deposit' | 'redeem') => void
 }) {
   const rankEmoji = ['🥇', '🥈', '🥉']
@@ -97,7 +97,7 @@ function AiRecommendCard({
   // 非合法 EVM 地址（模型幻觉）直接跳过请求
   const isValidAddr = /^0x[0-9a-fA-F]{40}$/.test(rec.address)
 
-  const { data: vault, isLoading } = useQuery({
+  const { data: vaultData, isLoading } = useQuery({
     queryKey: ['vault', rec.chainId, rec.address],
     queryFn: () => getVaultDetail(rec.chainId, rec.address),
     staleTime: 5 * 60 * 1000,
@@ -105,6 +105,34 @@ function AiRecommendCard({
     retry: 0,          // 详情接口失败不重试，避免刷屏报错
     throwOnError: false, // 错误静默降级，用 rec 数据兜底
   })
+
+  // 详情加载失败时用 rec 数据构造 fallback Vault，确保存款按钮始终可用
+  const fallbackVault: Vault = {
+    address: rec.address,
+    chainId: rec.chainId,
+    network: String(rec.chainId),
+    slug: rec.address,
+    name: rec.name,
+    protocol: { name: rec.protocol, url: '' },
+    underlyingTokens: rec.tokens.map(t => ({ symbol: t, address: '', decimals: 18 })),
+    lpTokens: [],
+    tags: [],
+    analytics: {
+      apy: { base: null, reward: null, total: Number(rec.apy) || 0 },
+      apy1d: null, apy7d: null, apy30d: null,
+      tvl: { usd: rec.tvlUsd ?? '0' },
+      updatedAt: '',
+    },
+    isTransactional: true,  // 默认支持存款
+    isRedeemable: true,     // 默认支持赎回
+    depositPacks: [],
+    redeemPacks: [],
+    provider: rec.protocol,
+    syncedAt: '',
+  }
+
+  // vault 优先使用 API 返回值，失败时降级到 fallback（保证按钮始终渲染）
+  const vault = vaultData ?? (isValidAddr && !isLoading ? fallbackVault : undefined)
 
   const displayName      = vault?.name ?? rec.name
   const displayProtocol  = vault?.protocol.name ?? rec.protocol
@@ -116,13 +144,9 @@ function AiRecommendCard({
   const displayTvl       = vault?.analytics.tvl.usd ?? rec.tvlUsd
   const protocolUrl      = vault?.protocol.url
 
-  const position = positions.find(pos =>
-    pos.chainId === rec.chainId &&
-    displayTokens.some(t => t.toUpperCase() === pos.asset.symbol.toUpperCase()) &&
-    pos.protocolName.toLowerCase().replace(/[^a-z0-9]/g, '').includes(
-      displayProtocol.toLowerCase().replace(/[^a-z0-9]/g, '').slice(0, 6)
-    )
-  ) ?? null
+  // 用 slug 精确匹配，与主页 VaultCard 保持一致，不再使用协议名模糊匹配
+  const recSlug = `${rec.chainId}-${rec.address.toLowerCase()}`
+  const position = positionMap.get(recSlug) ?? null
 
   const posBalanceUsd    = position ? parseFloat(position.balanceUsd) : null
   const posBalanceNative = position ? parseFloat(position.balanceNative) : null
@@ -271,12 +295,7 @@ function AiRecommendCard({
           ) : (
             <span className="ml-auto text-[11px] text-gray-700">不支持存款</span>
           )
-        ) : (
-          // 详情未加载（失败或未请求）：静默降级，显示协议地址供参考
-          <span className="ml-auto text-[10px] text-gray-700 font-mono">
-            {rec.address.slice(0, 6)}…{rec.address.slice(-4)}
-          </span>
-        )}
+        ) : null}
       </div>
     </div>
   )
@@ -308,9 +327,11 @@ const ASSET_TABS = [
 ]
 
 // 协议名模糊匹配（API 返回名和 vault protocol.name 可能有差异）
+// 注意：任意一方为空字符串时直接返回 false，避免空串 includes("") = true 导致全部误匹配
 function matchProtocol(posProtocol: string, vaultProtocol: string) {
   const p = posProtocol.toLowerCase().replace(/[^a-z0-9]/g, '')
   const v = vaultProtocol.toLowerCase().replace(/[^a-z0-9]/g, '')
+  if (!p || !v) return false
   return p.includes(v) || v.includes(p)
 }
 
@@ -531,7 +552,7 @@ export default function VaultsPage() {
   // Top Picks：已排好序（sortBy=apy），取前 3
   const topVaults = allVaults.slice(0, 3)
 
-  // 已连接钱包时拉取持仓
+  // 已连接钱包时拉取协议级持仓汇总（用于 Portfolio 页面和余额显示）
   const { data: portfolioData } = useQuery({
     queryKey: ['portfolio', connectedAddress],
     queryFn: () => getPortfolio(connectedAddress!),
@@ -539,6 +560,44 @@ export default function VaultsPage() {
     staleTime: 2 * 60 * 1000,
   })
   const positions = portfolioData?.positions ?? []
+
+  // 当前页面显示的 vault slugs（chainId-address），用于链上精确余额查询
+  const vaultSlugs = useMemo(
+    () => allVaults.map(v => v.slug).filter(Boolean),
+    [allVaults],
+  )
+
+  // 用 slug 做链上精确查询：哪些金库有余额
+  const { data: checkData } = useQuery({
+    queryKey: ['vaultBalances', connectedAddress, vaultSlugs],
+    queryFn: () => checkVaultBalances(connectedAddress!, vaultSlugs),
+    enabled: !!connectedAddress && vaultSlugs.length > 0,
+    staleTime: 90 * 1000,  // 90 秒，与后端缓存一致
+  })
+  // slugBalances: Set<slug>，有余额的金库集合
+  const slugBalances = useMemo(
+    () => new Set(Object.keys(checkData?.balances ?? {})),
+    [checkData],
+  )
+
+  // positionMap：slug → Position（用于卡片显示余额数字）
+  // 精确匹配：slug 在 slugBalances 中 → 找到对应的协议级持仓
+  const positionMap = useMemo(() => {
+    const map = new Map<string, Position>()
+    if (slugBalances.size === 0 || positions.length === 0) return map
+
+    for (const vault of allVaults) {
+      const slug = vault.slug
+      if (!slug || !slugBalances.has(slug)) continue
+      // 从协议级持仓中找对应的余额数据（同链 + 同资产）
+      const pos = positions.find(p =>
+        p.chainId === vault.chainId &&
+        vault.underlyingTokens.some(t => t.symbol.toUpperCase() === p.asset.symbol.toUpperCase())
+      )
+      if (pos) map.set(slug, pos)
+    }
+    return map
+  }, [allVaults, slugBalances, positions])
 
   const handleFilterChange = useCallback((f: FilterState) => {
     setFilter(f)
@@ -676,7 +735,7 @@ export default function VaultsPage() {
                               rec={rec}
                               rank={i}
                               chainName={chainNames[rec.chainId] ?? `Chain ${rec.chainId}`}
-                              positions={positions}
+                              positionMap={positionMap}
                               onDeposit={(v, tab) => { setSelectedVault(v); setModalTab(tab ?? 'deposit') }}
                             />
                           ))}
@@ -853,7 +912,7 @@ export default function VaultsPage() {
               vault={vault}
               chainName={chainNames[vault.chainId] ?? `Chain ${vault.chainId}`}
               onDeposit={(v, tab) => { setSelectedVault(v); setModalTab(tab ?? 'deposit') }}
-              position={findPosition(vault, positions)}
+              position={positionMap.get(vault.slug)  ?? null}
             />
           ))}
         </div>
@@ -881,7 +940,7 @@ export default function VaultsPage() {
           vault={selectedVault}
           onClose={() => setSelectedVault(null)}
           initialTab={modalTab}
-          position={findPosition(selectedVault, positions)}
+          position={positionMap.get(selectedVault.slug) ?? null}
         />
       )}
     </div>

@@ -151,6 +151,7 @@ interface ToolCall {
 async function callGLM(
   messages: Message[],
   useTools: boolean,
+  forceToolUse = false,   // 首轮强制调用工具，防止模型直接输出空结果
 ): Promise<{ content: string | null; tool_calls?: ToolCall[] }> {
   const apiKey = process.env.BIGMODEL_API_KEY
   if (!apiKey) throw new Error('未配置 BIGMODEL_API_KEY')
@@ -158,12 +159,13 @@ async function callGLM(
   const body: Record<string, unknown> = {
     model: 'glm-4-flash-250414',
     messages,
-    temperature: 0.1,   // 降低随机性，让推荐更确定
-    max_tokens: 2048,   // 增大 token 上限，允许更丰富的推荐理由
+    temperature: 0.1,
+    max_tokens: 2048,
   }
   if (useTools) {
     body.tools = TOOLS
-    body.tool_choice = 'auto'
+    // forceToolUse=true 时用 required，防止模型跳过工具直接返回空
+    body.tool_choice = forceToolUse ? 'required' : 'auto'
   }
 
   const resp = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
@@ -192,35 +194,38 @@ function buildSystemPrompt(refCtx: string): string {
 ${refCtx}
 
 === 工作原则 ===
-1. 【必须调用工具】推荐前必须调用 search_vaults 获取真实数据。禁止从记忆中编造 vault 地址或 APY。
-2. 【精准匹配参数】用户提到链名/代币/协议/APY门槛/TVL要求，对应填入工具参数：
+1. 【必须多次调用工具】你必须先调用 search_vaults 获取真实数据，再输出推荐结果。严禁不调工具就输出结论。
+2. 【精准匹配参数】
    - "APY 超过 X%" → minApy: X
-   - "稳定币" → asset: "USDC" 或先不限定 asset，搜索后从结果中筛选
-   - "安全/大协议" → minTvl: 5000000（500万以上）
-   - "Arbitrum 上" → chainId: 42161
-3. 【多次调用】复杂查询可多次调用工具（不同资产/不同链），综合对比后推荐最优的
-4. 【具体推荐理由】reason 必须包含具体数字，格式示例：
-   "Arbitrum 最高 APY 12.5%（基础 8.2% + 奖励 4.3%），TVL $45M 流动性充足，Morpho 协议安全性高"
-5. 【多轮对话】可以参考历史消息理解用户意图（如"那 Base 上的呢？"是在追问上一条件）
+   - "安全/大协议/流动性好" → minTvl: 5000000
+   - "Arbitrum 上" → chainId: 42161，"Base 上" → chainId: 8453，"Ethereum/ETH主网" → chainId: 1
+   - "稳定币/stablecoin" → 必须分别调用三次工具：asset="USDC"、asset="USDT"、asset="DAI"，再合并取 APY 最高的推荐
+3. 【稳定币查询强制策略】当用户说"稳定币"时：
+   第一次调用：{ asset: "USDC", chainId: <用户指定>, sortBy: "apy", limit: 10 }
+   第二次调用：{ asset: "USDT", chainId: <用户指定>, sortBy: "apy", limit: 10 }
+   第三次调用：{ asset: "DAI",  chainId: <用户指定>, sortBy: "apy", limit: 10 }
+   然后从三次结果里选出 APY 最高的前 4 个作为推荐
+4. 【具体推荐理由】reason 必须包含具体数字：APY 数值、TVL 数值、协议名
+5. 【多轮对话】参考历史理解追问意图（"那 Base 上的呢？"等）
 
 === 输出格式（严格 JSON，不得有任何其他内容）===
-address 字段必须是工具返回结果中的真实 0x 十六进制地址（42位），禁止填写占位符或说明文字。
+address 必须是工具返回的真实 0x 地址（42位十六进制），严禁编造或填写占位符。
 {
-  "params": { "asset": "USDC", "chainId": 42161, "minApy": 5, "sortBy": "apy" },
+  "params": { "asset": "USDC", "chainId": 8453, "sortBy": "apy" },
   "recommendations": [
     {
-      "chainId": 42161,
+      "chainId": 8453,
       "address": "0x48f89d731c3571d527132d7e09f28f2f09c42ec0",
       "name": "USDC Morpho Vault",
       "protocol": "morpho-v1",
       "tokens": ["USDC"],
-      "apy": 12.5,
+      "apy": 8.5,
       "tvlUsd": "45000000",
-      "reason": "Arbitrum 最高 APY 12.5%（基础 8.2% + 奖励 4.3%），TVL $45M，Morpho 协议安全性高"
+      "reason": "Base 链 USDC 最高 APY 8.5%，TVL $45M 流动性充足，Morpho 安全可靠"
     }
   ],
   "explanation": "1-2句总结，说明找到了什么、为什么推荐",
-  "description": "参数摘要，如：代币 USDC，链 Arbitrum，APY ≥ 5%"
+  "description": "参数摘要，如：稳定币，链 Base"
 }
 
 不相关问题返回：{ "params": {}, "recommendations": [], "explanation": "说明原因", "description": "" }`
@@ -252,10 +257,16 @@ searchRouter.post('/parse', async (c) => {
       { role: 'user', content: query },
     ]
 
-    // 最多 5 轮工具调用
+    // 最多 5 轮工具调用；第 0 轮强制调用工具，防止模型直接返回空
     let finalContent: string | null = null
+    // 收集所有工具调用返回的真实 vault 数据，用于兜底推荐
+    const allToolVaults: Array<{
+      chainId: number; address: string; name: string; protocol: string
+      tokens: string[]; apy: number; tvlUsd: string
+    }> = []
+
     for (let round = 0; round < 5; round++) {
-      const reply = await callGLM(messages, true)
+      const reply = await callGLM(messages, true, round === 0)
 
       if (reply.tool_calls && reply.tool_calls.length > 0) {
         messages.push({ role: 'assistant', content: reply.content ?? null, tool_calls: reply.tool_calls })
@@ -264,6 +275,11 @@ searchRouter.post('/parse', async (c) => {
           reply.tool_calls.map(async tc => {
             const args = JSON.parse(tc.function.arguments) as Record<string, unknown>
             const result = await executeTool(tc.function.name, args)
+            // 收集工具返回的 vault 数据
+            try {
+              const rows = JSON.parse(result)
+              if (Array.isArray(rows)) allToolVaults.push(...rows)
+            } catch { /* 忽略解析错误 */ }
             return { id: tc.id, name: tc.function.name, result }
           })
         )
@@ -304,6 +320,28 @@ searchRouter.post('/parse', async (c) => {
     const filtered = before - result.recommendations.length
     if (filtered > 0) {
       console.warn(`[AI Search] 过滤掉 ${filtered} 条非法地址推荐`)
+    }
+
+    // 兜底：若模型推荐为空但工具有返回数据，直接取工具数据 APY 前 4 作为推荐
+    if (result.recommendations.length === 0 && allToolVaults.length > 0) {
+      console.warn('[AI Search] 模型推荐为空，启用工具数据兜底')
+      // 去重（同地址+链）并按 APY 降序取前 4
+      const seen = new Set<string>()
+      const top = allToolVaults
+        .filter(v => EVM_ADDR_RE.test(v.address) && !seen.has(`${v.chainId}:${v.address}`) && seen.add(`${v.chainId}:${v.address}`))
+        .sort((a, b) => (b.apy ?? 0) - (a.apy ?? 0))
+        .slice(0, 4)
+      result.recommendations = top.map(v => ({
+        chainId:  v.chainId,
+        address:  v.address,
+        name:     v.name,
+        protocol: v.protocol,
+        tokens:   v.tokens,
+        apy:      v.apy,
+        tvlUsd:   v.tvlUsd,
+        reason:   `APY ${(v.apy ?? 0).toFixed(2)}%，TVL ${formatTvl(v.tvlUsd)}，协议 ${v.protocol}`,
+      }))
+      result.explanation = result.explanation || `共找到 ${allToolVaults.length} 个金库，以下是 APY 最高的推荐。`
     }
 
     console.log(`[AI Search] 完成，推荐 ${result.recommendations.length} 个金库`)

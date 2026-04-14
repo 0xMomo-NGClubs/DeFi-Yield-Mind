@@ -54,6 +54,8 @@ export interface Position {
   asset: { address: string; name: string; symbol: string; decimals: number }
   balanceUsd: string
   balanceNative: string
+  // 链上精确匹配后填入（小写），可与 Vault.address 精准对应
+  vaultAddress?: string
 }
 
 export interface PortfolioResponse {
@@ -103,6 +105,19 @@ export function getVaultDetail(chainId: number, address: string): Promise<Vault>
 
 export function getPortfolio(wallet: string): Promise<PortfolioResponse> {
   return request<PortfolioResponse>(`/portfolio/${wallet}`)
+}
+
+// 精确查询钱包在指定金库列表中的链上余额
+// slugs 格式："chainId-address"，例如 "8453-0xabc..."
+// 返回：{ "8453-0xabc...": "1234567" }（只含余额 > 0 的条目）
+export function checkVaultBalances(
+  wallet: string,
+  slugs: string[],
+): Promise<{ balances: Record<string, string> }> {
+  return request<{ balances: Record<string, string> }>(`/portfolio/${wallet}/check`, {
+    method: 'POST',
+    body: JSON.stringify({ slugs }),
+  })
 }
 
 export function getChains(): Promise<{ chains: unknown[] }> {
