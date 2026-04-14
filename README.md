@@ -2,8 +2,8 @@
 
 > 多链 DeFi 收益聚合器，AI 驱动的智能选仓与自动迁移平台
 
-**🔗 在线 Demo：[http://54.78.148.91](http://54.78.148.91)**  
-**📄 API 文档：[http://54.78.148.91/api/scalar](http://54.78.148.91/api/scalar)**  
+**🔗 在线 Demo：[http://dym.66chen.com](http://dym.66chen.com)**  
+**📄 API 文档：[http://dym.66chen.com/api/scalar](http://dym.66chen.com/api/scalar)**  
 **🏆 参赛：[DeFi Mullet Hackathon #1: Builder Edition](https://lifi.notion.site/defi-mullet-hackathon-1-builder-edition)**  
 **赛道：AI × Earn ＋ Yield Builder**
 
