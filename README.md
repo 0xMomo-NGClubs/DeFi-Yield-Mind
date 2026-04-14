@@ -13,7 +13,7 @@
 
 ## 项目简介
 
-**DeFi Yield Mind** 是一个由 AI 驱动的多链 DeFi 收益聚合平台，基于 **LI.FI Earn API** 构建。
+**DeFi Yield Mind** 是一个基于 **LI.FI Earn API** 构建的多链 DeFi 收益聚合平台，内置 AI 智能搜索与 Agent 自动化能力。
 
 用户可以用自然语言搜索全网最优收益机会，通过 LI.FI Composer 一笔完成跨链存款，并借助 Agent Skill 实现 7×24 自动盯盘与策略迁移——让 AI 帮你管理 DeFi 收益，不再需要手动跨协议比价。
 
