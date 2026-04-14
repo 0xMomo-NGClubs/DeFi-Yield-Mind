@@ -2,7 +2,7 @@
 
 > ⚠️ **免责声明**：本参赛项目代码以及演示站仅供学习和交流，不要使用大资金操作。
 
-> 多链 DeFi 收益聚合器，AI 驱动的智能选仓与自动迁移平台
+> 多链 DeFi 收益聚合器，LI.FI Earn 驱动的智能选仓与自动迁移平台
 
 **🔗 在线 Demo：[https://dym.0xmomo.com](https://dym.0xmomo.com)**  
 **📄 API 文档：[https://dym.0xmomo.com/api/scalar](https://dym.0xmomo.com/api/scalar)**  
